@@ -6,6 +6,7 @@ import time
 from cose.messages.sign1message import Sign1Message
 from cose.headers import Algorithm, KID
 from cose.algorithms import Es256
+from cose.keys import EC2Key
 import cbor2
 
 # TODO: Is this dynamic in some way? The examples in the specifications don't match
@@ -55,11 +56,12 @@ print(f'Using version {version}')
 padding_length = math.ceil(len(encoded_payload) / 8) * 8 - len(encoded_payload)
 decoded_payload = base64.b32decode(encoded_payload + '=' * padding_length)
 
-decoded_payload = Sign1Message.decode(decoded_payload)
+cose_payload = Sign1Message.decode(decoded_payload)
+print(f'Got COSE payload {cose_payload}')
 
-headers = decoded_payload.phdr
-payload = cbor2.loads(decoded_payload.payload)
-print(f'Got payload {payload}')
+headers = cose_payload.phdr
+payload = cbor2.loads(cose_payload.payload)
+print(f'Got CBOR payload {payload}')
 
 # Verify headers
 if not headers.get(KID) or not headers.get(Algorithm):
@@ -101,13 +103,17 @@ if jwk_key is None:
 	print('JWK not found')
 	exit(1)
 
-# TODO: Is this just the above grabbing of jwk_key?
-# With the retrieved public key validate the digital signature over the
-# COSE_Sign1 structure, if an error occurs then fail.
+x_padding_length = math.ceil(len(jwk_key['x']) / 4) * 4 - len(jwk_key['x'])
+y_padding_length = math.ceil(len(jwk_key['y']) / 4) * 4 - len(jwk_key['y'])
+x = base64.urlsafe_b64decode(jwk_key['x'] + '=' * x_padding_length)
+y = base64.urlsafe_b64decode(jwk_key['y'] + '=' * y_padding_length)
+cose_key = EC2Key(crv='P_256', x=x, y=y, optional_params={'KTY': 'EC2', 'ALG': 'ES256'})
+cose_payload.key = cose_key
 
 # Validate all of the claims
 print(f'Unique ID {cwt_token_id}')  # TODO: decode and make sure its a valid UUID
 print(f'Issuer matches? {issuer in VALID_ISSUERS}')
 print(f'Active? {not_before < int(time.time())}')
 print(f'Expired? {expiry < int(time.time())}')
+print(f'Signature verified? {cose_payload.verify_signature()}')
 print(f'Verifiable Claim {verifiable_claim}')  # TODO: validate this https://nzcp.covid19.health.nz/#verifiable-credential-claim-structure
